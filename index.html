@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>高精度・地図計測アプリ - セキュリティ版</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; font-family: sans-serif; }
+        #map { width: 100%; height: 100%; position: absolute; top: 0; bottom: 0; z-index: 1; }
+        
+        #left-panel {
+            position: absolute; top: 10px; left: 10px; z-index: 1000;
+            width: 280px; max-height: 95%; display: flex; flex-direction: column; gap: 8px;
+        }
+        #search-box, #result-panel, #save-panel {
+            background: rgba(255, 255, 255, 0.95); padding: 10px; border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        }
+        #search-box { display: flex; gap: 5px; }
+        #search-input { flex-grow: 1; padding: 6px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; }
+        
+        #result-panel { overflow-y: auto; }
+        h4 { margin: 0 0 8px 0; color: #333; border-bottom: 2px solid #ddd; padding-bottom: 3px; font-size: 14px; }
+        .info-section { margin-bottom: 8px; font-size: 12px; }
+        .data-list { font-size: 11px; color: #555; max-height: 70px; overflow-y: auto; padding-left: 15px; margin: 3px 0; }
+        
+        .save-form { display: flex; gap: 5px; margin-bottom: 8px; }
+        #data-name-input { flex-grow: 1; padding: 5px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px; }
+        
+        .history-list { list-style: none; padding: 0; margin: 0; max-height: 90px; overflow-y: auto; font-size: 12px; }
+        .history-item { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; border-bottom: 1px dashed #ccc; }
+        .history-link { color: #1e90ff; cursor: pointer; text-decoration: underline; flex-grow: 1; font-weight: bold; }
+        
+        .del-btn { 
+            background: #ff4757; color: white; border: none; padding: 6px 12px; 
+            border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold;
+        }
+        .popup-del-btn {
+            background: #ff4757; color: white; border: none; padding: 4px 8px;
+            border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold; margin-top: 5px;
+            width: 100%; display: block; text-align: center;
+        }
+
+        button { padding: 6px 12px; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; }
+        .btn-blue { background-color: #1e90ff; }
+        .btn-green { background-color: #2ed573; }
+        .btn-red { background-color: #ff4757; width: 100%; margin-top: 5px; }
+        
+        .map-label { background: rgba(255, 255, 255, 0.85); border: 1px solid #666; border-radius: 4px; padding: 2px 5px; font-size: 11px; font-weight: bold; white-space: nowrap; }
+        .dist-style { color: #1e90ff; border-color: #1e90ff; }
+        .angle-style { color: #d35400; border-color: #d35400; font-size: 10px; }
+    </style>
+</head>
+<body>
+
+    <!-- 🔒 セキュリティ用のパスワード認証プログラム -->
+    <script>
+        // 【重要】'1234'の部分を、ご自身の好きなパスワード（数字や英語）に変更してください
+        const SECRET_PASSWORD = 'Suda111'; 
+        
+        const userPassword = prompt("パスワードを入力してください / Enter Password:");
+        if (userPassword !== SECRET_PASSWORD) {
+            alert("パスワードが違います / Incorrect Password.");
+            document.body.innerHTML = '<h1 style="text-align:center; margin-top:100px; color:red;">Access Denied (アクセス拒否)</h1>';
+            window.stop();
+        }
+    </script>
+
+    <div id="left-panel">
+        <div id="search-box">
+            <input type="text" id="search-input" placeholder="中野区中央5-4-23 など番地まで入力" onkeypress="if(event.key==='Enter') searchLocation()">
+            <button class="btn-blue" onclick="searchLocation()">検索</button>
+        </div>
+
+        <div id="result-panel">
+            <h4>計測コントロール</h4>
+            <div class="info-section">
+                <strong>【現在の面積】</strong>
+                <div id="area-output" style="font-size: 14px; color: #2ed573; margin-top: 3px;">点は3つ以上必要です</div>
+            </div>
+            <div class="info-section">
+                <strong>【各辺の距離】</strong>
+                <ul id="distance-list" class="data-list"><li>点を選択してください</li></ul>
+            </div>
+            <div class="info-section">
+                <strong>【各角の角度】</strong>
+                <ul id="angle-list" class="data-list"><li>点は3つ以上必要です</li></ul>
+            </div>
+            <button class="btn-red" onclick="clearMap()">データをリセット</button>
+        </div>
+
+        <div id="save-panel">
+            <h4>データの記録保存</h4>
+            <div class="save-form">
+                <input type="text" id="data-name-input" placeholder="記録の名前">
+                <button class="btn-green" onclick="saveCurrentData()">保存</button>
+            </div>
+            <strong>【保存された履歴】</strong>
+            <ul id="history-list" class="history-list"></ul>
+        </div>
+    </div>
+
+    <div id="map"></div>
+
+    <script>
+        const gsiLayer = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', {
+            maxZoom: 21, maxNativeZoom: 18,
+            attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank">国土地理院</a>'
+        });
+
+        const map = L.map('map', {
+            center: [35.7056, 139.6658], zoom: 16, maxZoom: 21, layers: [gsiLayer]
+        });
+
+        let markers = [];       
+        let polygon = null;     
+        let mapLabels = [];    
+        let searchMarker = null;
+        let guideLine = null; 
+
+        window.onload = function() {
+            updateHistoryList();
+        };
+
+        map.on('click', function(e) {
+            addMeasurePoint(e.latlng);
+        });
+
+        map.on('drag', function(e) {
+            if (markers.length > 0) {
+                const lastPoint = markers[markers.length - 1].getLatLng();
+                const currentCenter = map.getCenter();
+
+                if (guideLine) {
+                    guideLine.setLatLngs([lastPoint, currentCenter]);
+                } else {
+                    guideLine = L.polyline([lastPoint, currentCenter], {
+                        color: '#ff4757', weight: 2, dashArray: '5, 10', opacity: 0.7
+                    }).addTo(map);
+                }
+            }
+        });
+
+        function addMeasurePoint(latlng) {
+            const marker = L.marker(latlng).addTo(map);
+            markers.push(marker);
+            
+            if (guideLine) { map.removeLayer(guideLine); guideLine = null; }
+            updateMapAndMetrics();
+        }
+
+        function searchLocation() {
+            const query = document.getElementById('search-input').value.trim();
+            if (!query) return;
+
+            const url = `https://geonlp.ex.nii.ac.jp/api/geocoder?search_word=${encodeURIComponent(query)}`;
+
+            fetch(url)
+                .then(res => res.json())
+                .then(data => {
+                    if (data && data.length > 0) {
+                        const result = data[0];
+                        const lat = parseFloat(result.latitude || result.lat);
+                        const lon = parseFloat(result.longitude || result.lng || result.lon);
+
+                        if(!isNaN(lat) && !isNaN(lon)) {
+                            map.setView([lat, lon], 19);
+                            if (searchMarker) map.removeLayer(searchMarker);
+                            searchMarker = L.circleMarker([lat, lon], {
+                                radius: 8, color: 'red', fillColor: '#ff4757', fillOpacity: 0.6
+                            }).addTo(map).bindPopup(`検索結果:<br>${query}`).openPopup();
+                            return;
+                        }
+                    }
+                    alert("詳細な場所が見つかりませんでした。少し広い住所（◯丁目までなど）で試してみてください。");
+                })
+                .catch(err => {
+                    const backupUrl = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&accept-language=ja`;
+                    fetch(backupUrl)
+                        .then(res => res.json())
+                        .then(data => {
+                            if(data && data.length > 0) {
+                                map.setView([parseFloat(data[0].lat), parseFloat(data[0].lon)], 18);
+                            } else { alert("場所が見つかりませんでした。"); }
+                        });
+                });
+        }
+
+        function updateMapAndMetrics() {
+            if (polygon) map.removeLayer(polygon);
+            mapLabels.forEach(label => map.removeLayer(label));
+            mapLabels = [];
+
+            const points = markers.map(m => m.getLatLng());
+            const distanceListEl = document.getElementById('distance-list');
+            const angleListEl = document.getElementById('angle-list');
+            distanceListEl.innerHTML = ""; angleListEl.innerHTML = "";
+
+            markers.forEach((marker, idx) => {
+                const popupContent = document.createElement('div');
+                popupContent.innerHTML = `<strong>点 ${idx + 1}</strong>`;
+                
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = 'popup-del-btn';
+                deleteBtn.textContent = '❌ この点を削除';
+                deleteBtn.onclick = function() {
+                    map.removeLayer(marker);
+                    markers.splice(idx, 1);
+                    updateMapAndMetrics();
+                };
+                
+                popupContent.appendChild(deleteBtn);
+                marker.bindPopup(popupContent);
+            });
+
+            if (points.length > 1) {
+                for (let i = 1; i < points.length; i++) {
+                    const dist = points[i-1].distanceTo(points[i]);
+                    const distText = dist >= 1000 ? `${(dist/1000).toFixed(2)} km` : `${dist.toFixed(1)} m`;
+                    
+                    const li = document.createElement('li');
+                    li.textContent = `点${i} → 点${i+1}: ${distText}`;
+                    distanceListEl.appendChild(li);
+
+                    const label = L.marker([(points[i-1].lat + points[i].lat)/2, (points[i-1].lng + points[i].lng)/2], {
+                        icon: L.divIcon({ className: 'map-label dist-style', html: distText, iconAnchor: [20, 10] })
+                    }).addTo(map);
+                    mapLabels.push(label);
+                }
+            } else { distanceListEl.innerHTML = "<li>2つ目の点をタップしてください</li>"; }
+
+            if (points.length >= 3) {
+                polygon = L.polygon(points, {color: '#2ed573', weight: 3, fillColor: '#2ed573', fillOpacity: 0.2}).addTo(map);
+                const areaSqM = calculateArea(points);
+                document.getElementById('area-output').innerHTML = `
+                    <strong>${areaSqM.toLocaleString(undefined, {maximumFractionDigits: 1})} ㎡</strong> 
+                    <span style="font-size:11px; color:#666;">（約 ${(areaSqM * 0.3025).toLocaleString(undefined, {maximumFractionDigits: 1})} 坪）</span>
+                `;
+
+                for (let i = 0; i < points.length; i++) {
+                    const angle = calculateInnerAngle(points[i], points[(i - 1 + points.length) % points.length], points[(i + 1) % points.length]);
+                    const li = document.createElement('li');
+                    li.textContent = `点${i+1}の角: ${angle.toFixed(1)}°`;
+                    angleListEl.appendChild(li);
+
+                    const label = L.marker([points[i].lat + 0.00003, points[i].lng], {
+                        icon: L.divIcon({ className: 'map-label angle-style', html: `∠${angle.toFixed(1)}°`, iconAnchor: [15, 20] })
+                    }).addTo(map);
+                    mapLabels.push(label);
+                }
+            } else {
+                if (points.length === 2) polygon = L.polyline(points, {color: '#1e90ff', weight: 3}).addTo(map);
+                document.getElementById('area-output').innerHTML = "<span style='color:#999;'>点は3つ以上必要です</span>";
+                angleListEl.innerHTML = "<li>点は3つ以上必要です</li>";
+            }
+        }
+
+        function calculateArea(latlngs) {
+            let area = 0; const radius = 6378137; const ref = latlngs[0];
+            const coords = latlngs.map(p => {
+                return {
+                    x: (p.lng - ref.lng) * (Math.PI / 180) * radius * Math.cos(ref.lat * Math.PI / 180),
+                    y: (p.lat - ref.lat) * (Math.PI / 180) * radius
+                };
+            });
+            for (let i = 0; i < coords.length; i++) {
+                const j = (i + 1) % coords.length;
+                area += coords[i].x * coords[j].y; area -= coords[j].x * coords[i].y;
+            }
+            return Math.abs(area / 2);
+        }
+
+        function calculateInnerAngle(current, prev, next) {
+            const radius = 6378137; const cosLat = Math.cos(current.lat * Math.PI / 180);
+            const v1 = { x: (prev.lng - current.lng) * (Math.PI / 180) * radius * cosLat, y: (prev.lat - current.lat) * (Math.PI / 180) * radius };
+            const v2 = { x: (next.lng - current.lng) * (Math.PI / 180) * radius * cosLat, y: (next.lat - current.lat) * (Math.PI / 180) * radius };
+            const dot = v1.x * v2.x + v1.y * v2.y; const m1 = Math.sqrt(v1.x**2 + v1.y**2); const m2 = Math.sqrt(v2.x**2 + v2.y**2);
+            if (m1 * m2 === 0) return 0;
+            return Math.acos(Math.max(-1, Math.min(1, dot / (m1 * m2)))) * (180 / Math.PI);
+        }
+
+        function clearMap() {
+            markers.forEach(m => map.removeLayer(m)); markers = [];
+            if (polygon) map.removeLayer(polygon); polygon = null;
+            mapLabels.forEach(label => map.removeLayer(label)); mapLabels = [];
+            if (searchMarker) map.removeLayer(searchMarker); searchMarker = null;
+            if (guideLine) { map.removeLayer(guideLine); guideLine = null; }
+            document.getElementById('distance-list').innerHTML = "<li>点を選択してください</li>";
+            document.getElementById('angle-list').innerHTML = "<li>点は3つ以上必要です</li>";
+            document.getElementById('area-output').innerHTML = "<span style='color:#999;'>点は3つ以上必要です</span>";
+        }
+
+        function saveCurrentData() {
+            const name = document.getElementById('data-name-input').value.trim();
+            if (!name) { alert("名前を入力してください。"); return; }
+            if (markers.length === 0) { alert("計測データがありません。"); return; }
+
+            const rawPoints = markers.map(m => ({lat: m.getLatLng().lat, lng: m.getLatLng().lng}));
+            let savedData = JSON.parse(localStorage.getItem('map_measure_records')) || {};
+            savedData[name] = rawPoints;
+            
+            localStorage.setItem('map_measure_records', JSON.stringify(savedData));
+            document.getElementById('data-name-input').value = ""; 
+            
+            alert(`「${name}」を保存しました！`);
+            updateHistoryList();
+        }
+
+        function updateHistoryList() {
+            const listEl = document.getElementById('history-list');
+            listEl.innerHTML = "";
+            const savedData = JSON.parse(localStorage.getItem('map_measure_records')) || {};
+            const keys = Object.keys(savedData);
+
+            if (keys.length === 0) {
+                listEl.innerHTML = "<li style='color:#999; font-size:11px;'>保存されたデータはありません</li>";
+                return;
+            }
+
+            keys.forEach(key => {
+                const li = document.createElement('li');
+                li.className = "history-item";
+
+                const link = document.createElement('span');
+                link.className = "history-link";
+                link.textContent = key;
+                link.setAttribute('onclick', `loadSavedData("${key}")`);
+
+                const delBtn = document.createElement('button');
+                delBtn.className = "del-btn";
+                delBtn.textContent = "削除";
+                delBtn.setAttribute('onclick', `deleteData("${key}")`);
+
+                li.appendChild(link);
+                li.appendChild(delBtn);
+                listEl.appendChild(li);
+            });
+        }
+
+        function loadSavedData(name) {
+            const savedData = JSON.parse(localStorage.getItem('map_measure_records')) || {};
+            const rawPoints = savedData[name];
+            if (!rawPoints) return;
+
+            clearMap();
+
+            rawPoints.forEach((pt) => {
+                const latlng = L.latLng(pt.lat, pt.lng);
+                const marker = L.marker(latlng).addTo(map);
+                markers.push(marker);
+            });
+
+            updateMapAndMetrics();
+            
+            if (rawPoints.length > 0) {
+                map.setView([rawPoints[0].lat, rawPoints[0].lng], 19);
+                markers[0].openPopup();
+            }
+        }
+
+        function deleteData(name) {
+            if(event) event.stopPropagation();
+            if (confirm(`「${name}」を削除しますか？`)) {
+                let savedData = JSON.parse(localStorage.getItem('map_measure_records')) || {};
+                delete savedData[name];
+                localStorage.setItem('map_measure_records', JSON.stringify(savedData));
+                updateHistoryList();
+            }
+        }
+    </script>
+</body>
+</html>
